@@ -1,0 +1,3 @@
+# Requirements for the GCS bucket zip project
+google-cloud-storage==2.18.2
+python-dotenv==1.0.1
