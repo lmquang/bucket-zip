@@ -1,17 +1,19 @@
-import logging
-from google.cloud import storage
-import zipfile
-import io
-import sys
-import os
-import base64
-import json
-from dotenv import load_dotenv
 import argparse
+import base64
 import gc
-from memory_profiler import profile
+import io
+import json
+import logging
+import os
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
+from typing import List, Tuple, Set, Optional
+
+import zipfile
+from dotenv import load_dotenv
+from google.cloud import storage
+from memory_profiler import profile
 
 # Configure logging
 logging.basicConfig(
@@ -26,13 +28,14 @@ logging.basicConfig(
 # Load environment variables
 load_dotenv()
 
-def format_size(size_bytes):
+def format_size(size_bytes: float) -> str:
+    """Convert bytes to human-readable format."""
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size_bytes < 1024.0:
             return f"{size_bytes:.2f} {unit}"
         size_bytes /= 1024.0
 
-def process_blob(blob, result_queue):
+def process_blob(blob: storage.Blob, result_queue: Queue) -> None:
     """Process a single blob and add it to the result queue."""
     try:
         logging.info(f"Processing file: {blob.name}, size: {format_size(blob.size)}")
@@ -42,13 +45,13 @@ def process_blob(blob, result_queue):
     except Exception as exc:
         logging.error(f"Error processing {blob.name}: {exc}")
 
-def get_uploaded_chunks(destination_bucket, source_bucket_name):
+def get_uploaded_chunks(destination_bucket: storage.Bucket, source_bucket_name: str) -> Set[str]:
     """Get a list of already uploaded zip chunks."""
     prefix = f"{source_bucket_name}/"
     blobs = destination_bucket.list_blobs(prefix=prefix)
-    return set(blob.name.split('/')[-1] for blob in blobs if blob.name.endswith('.zip'))
+    return {blob.name.split('/')[-1] for blob in blobs if blob.name.endswith('.zip')}
 
-def get_last_processed_info(destination_bucket, source_bucket_name):
+def get_last_processed_info(destination_bucket: storage.Bucket, source_bucket_name: str) -> Tuple[Optional[str], int]:
     """Get the name of the last processed file and page number from the manifest."""
     manifest_blob = destination_bucket.blob(f'{source_bucket_name}/manifest.txt')
     if not manifest_blob.exists():
@@ -73,9 +76,18 @@ def get_last_processed_info(destination_bucket, source_bucket_name):
     return None, 0
 
 @profile
-def zip_and_upload_page(page_blobs, destination_bucket, source_bucket_name, page_number, max_workers, uploaded_chunks, last_processed_file):
+def zip_and_upload_page(
+    page_blobs: List[storage.Blob],
+    destination_bucket: storage.Bucket,
+    source_bucket_name: str,
+    page_number: int,
+    max_workers: int,
+    uploaded_chunks: Set[str],
+    last_processed_file: Optional[str]
+) -> int:
+    """Zip and upload a page of blobs."""
     zip_buffer = io.BytesIO()
-    result_queue = Queue()
+    result_queue: Queue = Queue()
     processed_files = 0
     zip_chunk_number = 1
     zip_size = 0
@@ -147,13 +159,14 @@ def zip_and_upload_page(page_blobs, destination_bucket, source_bucket_name, page
 
     return zip_chunk_number
 
-def is_page_fully_uploaded(uploaded_chunks, page_number):
+def is_page_fully_uploaded(uploaded_chunks: Set[str], page_number: int) -> bool:
     """Check if all chunks for a given page are already uploaded."""
     page_chunks = [chunk for chunk in uploaded_chunks if chunk.startswith(f'page_{page_number:05d}_')]
     return len(page_chunks) > 0 and all(f'page_{page_number:05d}_chunk_{i+1:05d}.zip' in uploaded_chunks for i in range(len(page_chunks)))
 
 @profile
-def zip_and_upload_bucket(source_bucket_name, destination_bucket_name, max_workers=10):
+def zip_and_upload_bucket(source_bucket_name: str, destination_bucket_name: str, max_workers: int = 10) -> None:
+    """Zip and upload the contents of a source bucket to a destination bucket."""
     try:
         logging.info(f"Starting zip_and_upload_bucket with source: {source_bucket_name}, destination: {destination_bucket_name}")
         
@@ -215,7 +228,8 @@ def zip_and_upload_bucket(source_bucket_name, destination_bucket_name, max_worke
         logging.exception(f"An error occurred: {str(e)}")
         raise
 
-if __name__ == "__main__":
+def main():
+    """Main function to parse arguments and start the zip and upload process."""
     logging.info("Script started")
     
     parser = argparse.ArgumentParser(description="Zip and upload GCS bucket contents")
@@ -235,3 +249,6 @@ if __name__ == "__main__":
         sys.exit(1)
     
     logging.info("Script completed")
+
+if __name__ == "__main__":
+    main()
