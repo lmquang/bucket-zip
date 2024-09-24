@@ -1,6 +1,6 @@
 # Bucket Zip
 
-Bucket Zip is a Python-based tool designed to zip the contents of a Google Cloud Storage (GCS) bucket and upload the resulting zip files to another GCS bucket. It now supports creating multiple 1GB zip chunks for efficient handling of large data volumes.
+Bucket Zip is a Python-based tool designed to zip the contents of a Google Cloud Storage (GCS) bucket and upload the resulting zip files to another GCS bucket. It supports creating multiple 1GB zip chunks for efficient handling of large data volumes and provides robust resumption capabilities.
 
 ## Features
 
@@ -8,8 +8,10 @@ Bucket Zip is a Python-based tool designed to zip the contents of a Google Cloud
 - Upload the zipped chunks to a destination GCS bucket
 - Automatic creation of new zip chunks when the 1GB limit is reached
 - Concurrent processing of blobs for improved performance
+- Robust resumption capabilities for interrupted operations
+- Efficient skipping of already processed pages and files
 - Configurable through command-line arguments
-- Logging capabilities
+- Detailed logging capabilities
 - Creates a manifest file for easy reconstruction of the original data structure
 
 ## Requirements
@@ -137,6 +139,20 @@ Contributions to Bucket Zip are welcome. Please ensure to update tests as approp
 
 [License information to be added]
 
-## Note on Recent Changes
+## Recent Improvements
 
-The script now creates multiple 1GB zip chunks when processing the bucket contents. This change allows for more efficient handling of large data volumes and ensures that each zip file is of a manageable size. A manifest file is created to keep track of all the chunks, enabling easy reconstruction of the original data structure. The `--max-zip-size` option has been removed as the chunk size is now fixed at 1GB.
+1. Efficient Page-Level Processing:
+   - The script now checks if an entire page of files has been uploaded before processing.
+   - Fully uploaded pages are skipped, improving efficiency during resumptions.
+
+2. Robust Resumption Capabilities:
+   - Can resume from the last processed file within a partially processed page.
+   - Automatically detects and skips already uploaded chunks.
+
+3. Manifest File Enhancements:
+   - The manifest file now accurately reflects all uploaded chunks, including those from previously completed runs.
+
+4. Performance Optimization:
+   - Reduced redundant processing by implementing smart checks for completed work.
+
+These improvements significantly enhance the script's ability to handle large data volumes efficiently, especially in scenarios where the process might be interrupted and resumed multiple times.

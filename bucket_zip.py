@@ -15,7 +15,7 @@ from queue import Queue
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bucket_zip.log'),
@@ -42,14 +42,45 @@ def process_blob(blob, result_queue):
     except Exception as exc:
         logging.error(f"Error processing {blob.name}: {exc}")
 
+def get_uploaded_chunks(destination_bucket, source_bucket_name):
+    """Get a list of already uploaded zip chunks."""
+    prefix = f"{source_bucket_name}/"
+    blobs = destination_bucket.list_blobs(prefix=prefix)
+    return set(blob.name.split('/')[-1] for blob in blobs if blob.name.endswith('.zip'))
+
+def get_last_processed_info(destination_bucket, source_bucket_name):
+    """Get the name of the last processed file and page number from the manifest."""
+    manifest_blob = destination_bucket.blob(f'{source_bucket_name}/manifest.txt')
+    if not manifest_blob.exists():
+        return None, 0
+    
+    manifest_content = manifest_blob.download_as_text()
+    lines = manifest_content.split('\n')
+    if len(lines) < 2:
+        return None, 0
+    
+    last_chunk = lines[-1]
+    last_chunk_blob = destination_bucket.blob(f'{source_bucket_name}/{last_chunk}')
+    
+    with last_chunk_blob.open("rb") as f:
+        with zipfile.ZipFile(f, 'r') as zip_ref:
+            file_list = zip_ref.namelist()
+            if file_list:
+                last_file = file_list[-1]
+                page_number = int(last_chunk.split('_')[1])
+                return last_file, page_number
+    
+    return None, 0
+
 @profile
-def zip_and_upload_page(page_blobs, destination_bucket, source_bucket_name, page_number, max_workers):
+def zip_and_upload_page(page_blobs, destination_bucket, source_bucket_name, page_number, max_workers, uploaded_chunks, last_processed_file):
     zip_buffer = io.BytesIO()
     result_queue = Queue()
     processed_files = 0
     zip_chunk_number = 1
     zip_size = 0
     MAX_ZIP_SIZE = 1024 * 1024 * 1024  # 1GB in bytes
+    resume_processing = last_processed_file is None
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(process_blob, blob, result_queue) for blob in page_blobs]
@@ -60,13 +91,23 @@ def zip_and_upload_page(page_blobs, destination_bucket, source_bucket_name, page
             while not result_queue.empty():
                 file_name, content = result_queue.get()
                 
+                if not resume_processing:
+                    if file_name == last_processed_file:
+                        resume_processing = True
+                    continue
+
                 # Check if adding this file would exceed the max zip size
                 if zip_size + len(content) > MAX_ZIP_SIZE and zip_size > 0:
                     # Upload the current zip file
                     zip_buffer.seek(0)
-                    destination_blob = destination_bucket.blob(f'{source_bucket_name}/page_{page_number:05d}_chunk_{zip_chunk_number:05d}.zip')
-                    destination_blob.upload_from_file(zip_buffer, content_type='application/zip')
-                    logging.info(f"Uploaded zip file for page {page_number}, chunk {zip_chunk_number}")
+                    chunk_name = f'page_{page_number:05d}_chunk_{zip_chunk_number:05d}.zip'
+                    if chunk_name not in uploaded_chunks:
+                        destination_blob = destination_bucket.blob(f'{source_bucket_name}/{chunk_name}')
+                        destination_blob.upload_from_file(zip_buffer, content_type='application/zip')
+                        logging.info(f"Uploaded zip file for page {page_number}, chunk {zip_chunk_number}")
+                        uploaded_chunks.add(chunk_name)
+                    else:
+                        logging.info(f"Skipped already uploaded zip file for page {page_number}, chunk {zip_chunk_number}")
                     
                     # Start a new zip file
                     zip_buffer.close()
@@ -88,9 +129,14 @@ def zip_and_upload_page(page_blobs, destination_bucket, source_bucket_name, page
     # Upload the last zip file if it's not empty
     if zip_size > 0:
         zip_buffer.seek(0)
-        destination_blob = destination_bucket.blob(f'{source_bucket_name}/page_{page_number:05d}_chunk_{zip_chunk_number:05d}.zip')
-        destination_blob.upload_from_file(zip_buffer, content_type='application/zip')
-        logging.info(f"Uploaded final zip file for page {page_number}, chunk {zip_chunk_number}")
+        chunk_name = f'page_{page_number:05d}_chunk_{zip_chunk_number:05d}.zip'
+        if chunk_name not in uploaded_chunks:
+            destination_blob = destination_bucket.blob(f'{source_bucket_name}/{chunk_name}')
+            destination_blob.upload_from_file(zip_buffer, content_type='application/zip')
+            logging.info(f"Uploaded final zip file for page {page_number}, chunk {zip_chunk_number}")
+            uploaded_chunks.add(chunk_name)
+        else:
+            logging.info(f"Skipped already uploaded final zip file for page {page_number}, chunk {zip_chunk_number}")
 
     logging.info(f"Finished creating zip files for page {page_number}. Total files processed: {processed_files}")
     logging.info(f"Total chunks created for page {page_number}: {zip_chunk_number}")
@@ -100,6 +146,11 @@ def zip_and_upload_page(page_blobs, destination_bucket, source_bucket_name, page
     gc.collect()
 
     return zip_chunk_number
+
+def is_page_fully_uploaded(uploaded_chunks, page_number):
+    """Check if all chunks for a given page are already uploaded."""
+    page_chunks = [chunk for chunk in uploaded_chunks if chunk.startswith(f'page_{page_number:05d}_')]
+    return len(page_chunks) > 0 and all(f'page_{page_number:05d}_chunk_{i+1:05d}.zip' in uploaded_chunks for i in range(len(page_chunks)))
 
 @profile
 def zip_and_upload_bucket(source_bucket_name, destination_bucket_name, max_workers=10):
@@ -117,18 +168,42 @@ def zip_and_upload_bucket(source_bucket_name, destination_bucket_name, max_worke
         source_bucket = storage_client.bucket(source_bucket_name)
         destination_bucket = storage_client.bucket(destination_bucket_name)
         
+        # Get already uploaded chunks
+        uploaded_chunks = get_uploaded_chunks(destination_bucket, source_bucket_name)
+        logging.info(f"Found {len(uploaded_chunks)} already uploaded chunks")
+        
+        # Get the last processed file and page number
+        last_processed_file, last_page_number = get_last_processed_info(destination_bucket, source_bucket_name)
+        if last_processed_file:
+            logging.info(f"Resuming from last processed file: {last_processed_file} on page {last_page_number}")
+        else:
+            logging.info("Starting from the beginning")
+        
         page_number = 0
         manifest = []
         for page in source_bucket.list_blobs().pages:
             page_number += 1
+            
+            if is_page_fully_uploaded(uploaded_chunks, page_number):
+                logging.info(f"Skipping page {page_number} as it's already fully uploaded")
+                # Add all chunks for this page to the manifest
+                page_chunks = [chunk for chunk in uploaded_chunks if chunk.startswith(f'page_{page_number:05d}_')]
+                manifest.extend(sorted(page_chunks))
+                continue
+            
             logging.info(f"Processing page {page_number}")
-            chunk_count = zip_and_upload_page(page, destination_bucket, source_bucket_name, page_number, max_workers)
+            chunk_count = zip_and_upload_page(page, destination_bucket, source_bucket_name, page_number, max_workers, uploaded_chunks, last_processed_file if page_number == last_page_number else None)
             
             # Add chunk information to manifest
             for chunk in range(1, chunk_count + 1):
-                manifest.append(f"page_{page_number:05d}_chunk_{chunk:05d}.zip")
+                chunk_name = f"page_{page_number:05d}_chunk_{chunk:05d}.zip"
+                if chunk_name in uploaded_chunks:
+                    manifest.append(chunk_name)
+            
+            # Reset last_processed_file after processing the page where we resumed
+            last_processed_file = None
 
-        # Create a manifest file
+        # Create or update the manifest file
         manifest_content = f"Total pages: {page_number}\n"
         manifest_content += "\n".join(manifest)
         destination_blob = destination_bucket.blob(f'{source_bucket_name}/manifest.txt')
