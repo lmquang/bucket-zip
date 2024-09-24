@@ -7,7 +7,6 @@ PIP := $(VENV)/bin/pip
 # Default bucket names (replace these with your actual bucket names)
 SOURCE_BUCKET ?= example-source-bucket
 DEST_BUCKET ?= example-destination-bucket
-MAX_ZIP_SIZE ?= 1024  # Default to 1GB (1024 MB)
 MAX_WORKERS ?= 10     # Default to 10 workers
 
 # GCP Service Account Key (base64 encoded JSON)
@@ -25,7 +24,7 @@ venv:
 install: venv
 	$(PIP) install -r requirements.txt
 
-# Usage: make run SOURCE_BUCKET=your-source-bucket DEST_BUCKET=your-destination-bucket MAX_ZIP_SIZE=500 MAX_WORKERS=20
+# Usage: make run SOURCE_BUCKET=your-source-bucket DEST_BUCKET=your-destination-bucket MAX_WORKERS=20
 run: install
 	@if [ ! -f .env ] && [ -z "$(GCP_SA_KEY)" ]; then \
 		echo "Error: Neither .env file nor GCP_SA_KEY environment variable is set."; \
@@ -36,7 +35,7 @@ run: install
 		echo "export GCP_SA_KEY=\$$(base64 -w 0 path/to/your/service-account-key.json)"; \
 		exit 1; \
 	fi
-	$(PYTHON) bucket_zip.py $(SOURCE_BUCKET) $(DEST_BUCKET) --max-zip-size $(MAX_ZIP_SIZE) --max-workers $(MAX_WORKERS)
+	$(PYTHON) bucket_zip.py $(SOURCE_BUCKET) $(DEST_BUCKET) --max-workers $(MAX_WORKERS)
 
 clean:
 	rm -rf $(VENV)
@@ -47,7 +46,7 @@ help:
 	@echo "Usage:"
 	@echo "  make install    - Create virtual environment and install dependencies from requirements.txt"
 	@echo "  make run        - Run the script with default settings"
-	@echo "  make run SOURCE_BUCKET=your-source-bucket DEST_BUCKET=your-destination-bucket MAX_ZIP_SIZE=500 MAX_WORKERS=20"
+	@echo "  make run SOURCE_BUCKET=your-source-bucket DEST_BUCKET=your-destination-bucket MAX_WORKERS=20"
 	@echo "                  - Run the script with custom settings"
 	@echo "  make clean      - Remove virtual environment and compiled Python files"
 	@echo "  make help       - Show this help message"
@@ -55,8 +54,9 @@ help:
 	@echo "Parameters:"
 	@echo "  SOURCE_BUCKET   - Name of the source GCS bucket (default: example-source-bucket)"
 	@echo "  DEST_BUCKET     - Name of the destination GCS bucket (default: example-destination-bucket)"
-	@echo "  MAX_ZIP_SIZE    - Maximum size of the zip file before splitting, in MB (default: 1024)"
 	@echo "  MAX_WORKERS     - Maximum number of concurrent workers (default: 10)"
+	@echo ""
+	@echo "Note: The script now uses a fixed 1GB (1024MB) limit for each zip file chunk."
 	@echo ""
 	@echo "Before running, make sure to set the GCP_SA_KEY:"
 	@echo "Option 1: Create a .env file in the same directory with the following content:"
