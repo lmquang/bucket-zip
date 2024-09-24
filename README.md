@@ -1,16 +1,16 @@
 # Bucket Zip
 
-Bucket Zip is a Python-based tool designed to zip the entire contents of a Google Cloud Storage (GCS) bucket and upload the resulting zip file (or split parts if it's too large) to another GCS bucket.
+Bucket Zip is a Python-based tool designed to zip the contents of a Google Cloud Storage (GCS) bucket and upload the resulting zip files to another GCS bucket. It now supports creating multiple 1GB zip chunks for efficient handling of large data volumes.
 
 ## Features
 
-- Zip all contents of a source GCS bucket into a single zip file
-- Upload the zipped file to a destination GCS bucket
-- Automatic splitting of large zip files into smaller parts
-- Configurable maximum zip file size before splitting
+- Zip contents of a source GCS bucket into multiple 1GB zip chunks
+- Upload the zipped chunks to a destination GCS bucket
+- Automatic creation of new zip chunks when the 1GB limit is reached
 - Concurrent processing of blobs for improved performance
 - Configurable through command-line arguments
 - Logging capabilities
+- Creates a manifest file for easy reconstruction of the original data structure
 
 ## Requirements
 
@@ -75,7 +75,6 @@ python bucket_zip.py <source_bucket> <destination_bucket> [options]
 
 ### Options:
 
-- `--max-zip-size <int>`: Maximum size of the zip file before splitting (in MB, default: 1024 MB, which is 1GB)
 - `--max-workers <int>`: Maximum number of concurrent workers (default: 10)
 
 ### Examples:
@@ -85,12 +84,7 @@ python bucket_zip.py <source_bucket> <destination_bucket> [options]
 python bucket_zip.py my-source-bucket my-destination-bucket
 ```
 
-2. Set maximum zip size to 500MB:
-```bash
-python bucket_zip.py my-source-bucket my-destination-bucket --max-zip-size 500
-```
-
-3. Customize concurrency:
+2. Customize concurrency:
 ```bash
 python bucket_zip.py my-source-bucket my-destination-bucket --max-workers 20
 ```
@@ -121,9 +115,9 @@ make install
 make run SOURCE_BUCKET=my-source-bucket DEST_BUCKET=my-destination-bucket
 ```
 
-3. Run the script with custom maximum zip size (e.g., 500MB):
+3. Run the script with custom number of workers:
 ```bash
-make run SOURCE_BUCKET=my-source-bucket DEST_BUCKET=my-destination-bucket MAX_ZIP_SIZE=500
+make run SOURCE_BUCKET=my-source-bucket DEST_BUCKET=my-destination-bucket MAX_WORKERS=20
 ```
 
 4. Clean up the project (remove virtual environment and compiled Python files):
@@ -145,4 +139,4 @@ Contributions to Bucket Zip are welcome. Please ensure to update tests as approp
 
 ## Note on Recent Changes
 
-The script now zips the entire bucket contents into a single zip file before potentially splitting it into parts if it exceeds the maximum size. The `--max-zip-size` option allows you to set the maximum size of the zip file in MB before it gets split into parts. This change provides more flexibility in handling large buckets and ensures that the contents are zipped together before any splitting occurs.
+The script now creates multiple 1GB zip chunks when processing the bucket contents. This change allows for more efficient handling of large data volumes and ensures that each zip file is of a manageable size. A manifest file is created to keep track of all the chunks, enabling easy reconstruction of the original data structure. The `--max-zip-size` option has been removed as the chunk size is now fixed at 1GB.
